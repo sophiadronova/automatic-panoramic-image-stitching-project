@@ -3,6 +3,7 @@ import glob
 import numpy as np
 from collections import namedtuple
 import networkx as nx
+from weight_pyramid_blending import WeightPyramidBlending
 from pyramid_blending import PyramidBlending
 
 inputDir = '../Images/'
@@ -159,7 +160,7 @@ def main():
     w, h, translation = ComputeExtentAndTranslation(cumulative_H, images)
 
     warped = ComputeWarpedImage(w, h, translation, images, cumulative_H)
-    blended_image = PyramidBlending(warped)
+    blended_image = WeightPyramidBlending(warped)
 
     cv2.imwrite(outputDir + "warped_" + subDir + '.jpg', blended_image)
 
