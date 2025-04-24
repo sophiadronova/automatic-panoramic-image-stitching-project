@@ -3,9 +3,10 @@ import glob
 import numpy as np
 from collections import namedtuple
 import networkx as nx
+from pyramid_blending import PyramidBlending
 
 inputDir = '../Images/'
-outputDir = '../SimpleCopy/'
+outputDir = '../MB_Blend/'
 
 Feature = namedtuple('Feature', ['keypoints', 'descriptors'])
 HWeight = namedtuple('HWeight', ['H', 'weight'])
@@ -14,20 +15,6 @@ def ReadImages(dir):
     image_paths = glob.glob(dir)
     images = [cv2.imread(path) for path in image_paths]
     return images
-
-def Cv2Stitcher(images, panorama):
-    # Create a stitcher object
-    stitcher = cv2.Stitcher_create()
-    # Stitch the images
-    (status, stitched) = stitcher.stitch(images)
-    if status == cv2.Stitcher_OK:
-        print("Stitching successful")
-        cv2.imwrite(panorama, stitched)
-        cv2.imshow("Result", stitched)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-    else:
-        print("Stitching failed with status", status)
 
 def Cv2SIFT(images):
     # Initialize SIFT detector
@@ -150,22 +137,17 @@ def ComputeExtentAndTranslation(cumulative_H, images):
     
     return (width, height, translation)
 
-def computeWarpedImage(w, h, translation, images, cumulative_H):
-    total_warp = np.zeros((h, w, 3), dtype=np.uint8)
+def ComputeWarpedImage(w, h, translation, images, cumulative_H):
+    warped = []
     for i, H in cumulative_H.items():
         image = images[i]
         H_corrected = translation @ H
-        warped = cv2.warpPerspective(image, H_corrected, (w, h), borderValue=(0,0,0))
-
-        gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-        mask = gray > 0
-        mask_3ch = np.dstack([mask]*3)
-
-        total_warp[mask_3ch] = warped[mask_3ch]
-    return total_warp
+        warped_image = cv2.warpPerspective(image, H_corrected, (w, h), borderValue=(0,0,0))
+        warped.append(warped_image)
+    return warped
 
 def main():
-    subDir = 'd'
+    subDir = 'c'
     images = ReadImages(inputDir + subDir + '/*')
     #Cv2Stitcher(images, outputDir + "panorama.png")
     features = Cv2SIFT(images)
@@ -176,8 +158,10 @@ def main():
     cumulative_H = ComputeCumulativeHomographies(H_dict)
     w, h, translation = ComputeExtentAndTranslation(cumulative_H, images)
 
-    warped = computeWarpedImage(w, h, translation, images, cumulative_H)
-    cv2.imwrite(outputDir + "warped_" + subDir + '.jpg', warped)
+    warped = ComputeWarpedImage(w, h, translation, images, cumulative_H)
+    blended_image = PyramidBlending(warped)
+
+    cv2.imwrite(outputDir + "warped_" + subDir + '.jpg', blended_image)
 
 
 if __name__ == "__main__":
