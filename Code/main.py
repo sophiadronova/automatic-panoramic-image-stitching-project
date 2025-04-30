@@ -148,7 +148,7 @@ def ComputeWarpedImage(w, h, translation, images, cumulative_H):
     return warped
 
 def main():
-    subDir = 'b'
+    subDir = 'e'
     images = ReadImages(inputDir + subDir + '/*')
     #Cv2Stitcher(images, outputDir + "panorama.png")
     features = Cv2SIFT(images)

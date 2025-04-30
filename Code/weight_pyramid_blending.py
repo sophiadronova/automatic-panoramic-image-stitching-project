@@ -15,6 +15,7 @@ def build_laplacian_pyramid(image, levels):
     laplacian_pyr.append(gaussian_pyr[-1])
     return laplacian_pyr
 
+
 def generate_weight_map(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     mask = (gray > 0).astype(np.uint8)
@@ -23,8 +24,8 @@ def generate_weight_map(image):
     return np.dstack([dist] * 3)
 
 def compute_max_weight_maps(weight_maps):
-    stacked = np.stack(weight_maps) 
-    gray_weights = np.mean(stacked, axis=3)
+    stacked = np.stack(weight_maps)   # Shape: (n_images, H, W, 3)
+    gray_weights = np.mean(stacked, axis=3)  # Convert to grayscale weights
     max_indices = np.argmax(gray_weights, axis=0)
 
     max_weight_maps = []
@@ -45,32 +46,6 @@ def blur_pyramid_weights(max_weight_maps, levels):
         blurred_weights.append(gp)
     return blurred_weights
 
-def blend_pyramids_with_weights(images, laplacian_pyramids, blurred_weights):
-    num_levels = len(laplacian_pyramids[0])
-    blended_pyramid = []
-
-    for level in range(num_levels):
-        numerator = np.zeros_like(laplacian_pyramids[0][level])
-        denominator = np.zeros_like(laplacian_pyramids[0][level][:,:,0])
-
-        for i in range(len(laplacian_pyramids)):
-            L = laplacian_pyramids[i][level]
-            W = blurred_weights[i][level]
-            valid_mask = np.any(images[i] > 0, axis=2).astype(np.float32)
-            valid_mask = cv2.resize(valid_mask, (W.shape[1], W.shape[0]))  # Match pyramid size
-            valid_mask = np.dstack([valid_mask]*3)
-
-            W = W * valid_mask
-
-            numerator += L * W
-            denominator += W[:,:,0]
-
-        denominator = np.maximum(denominator, 1e-6)
-        blended_level = numerator / denominator[:,:,None]
-        blended_pyramid.append(blended_level)
-
-    return blended_pyramid
-
 def reconstruct_from_pyramid(pyramid):
     img = pyramid[-1]
     for i in range(len(pyramid) - 2, -1, -1):
@@ -87,16 +62,57 @@ def create_total_mask(images):
     total_mask = np.dstack([total_mask]*3)       
     return total_mask
 
+def generate_valid_masks(images):
+    masks = []
+    for img in images:
+        valid = np.any(img > 0, axis=2).astype(np.float32)
+        masks.append(np.dstack([valid]*3))  # 3-channel
+    return masks
+
+def build_gaussian_pyramid(mask, levels):
+    gp = [mask.astype(np.float32)]
+    for _ in range(levels):
+        mask = cv2.pyrDown(mask)
+        gp.append(mask)
+    return gp
+
+def blend_pyramids_with_weights(images, laplacian_pyramids, blurred_weights, valid_pyramids):
+    num_levels = len(laplacian_pyramids[0])
+    blended_pyramid = []
+
+    for level in range(num_levels):
+        numerator = np.zeros_like(laplacian_pyramids[0][level])
+        denominator = np.zeros_like(numerator[:, :, 0])
+
+        for i in range(len(laplacian_pyramids)):
+            L = laplacian_pyramids[i][level]
+            W = blurred_weights[i][level]
+            M = valid_pyramids[i][level]
+
+            W_clean = W * M  # Cleaned weight
+            numerator += L * W_clean
+            denominator += W_clean[:, :, 0]
+
+        denominator = np.maximum(denominator, 1e-6)
+        blended_level = numerator / denominator[:, :, None]
+        blended_pyramid.append(blended_level)
+
+    return blended_pyramid
+
 def WeightPyramidBlending(images):
     w, h, _ = images[0].shape
-    levels = int(np.floor(np.log2(min(w, h))))
-    levels = min(levels, 6)
+    levels = min(int(np.floor(np.log2(min(w, h)))), 6)
 
     weight_maps = [generate_weight_map(image) for image in images]
-    max_weight_maps = compute_max_weight_maps(weight_maps)
+    valid_masks = generate_valid_masks(images)
+    masked_weights = [w * m for w, m in zip(weight_maps, valid_masks)]
+
+    max_weight_maps = compute_max_weight_maps(masked_weights)
     blurred_weights = blur_pyramid_weights(max_weight_maps, levels)
-    laplacian_pyramids = [build_laplacian_pyramid(image, levels) for image in images]
-    blended_pyramid = blend_pyramids_with_weights(images, laplacian_pyramids, blurred_weights)
+    laplacian_pyramids = [build_laplacian_pyramid(img, levels) for img in images]
+    valid_pyramids = [build_gaussian_pyramid(mask, levels) for mask in valid_masks]
+
+    blended_pyramid = blend_pyramids_with_weights(images, laplacian_pyramids, blurred_weights, valid_pyramids)
     blended_image = reconstruct_from_pyramid(blended_pyramid)
     mask = create_total_mask(images)
     return (blended_image * mask)   
