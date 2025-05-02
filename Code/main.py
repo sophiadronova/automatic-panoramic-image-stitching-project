@@ -4,7 +4,6 @@ import numpy as np
 from collections import namedtuple
 import networkx as nx
 from weight_pyramid_blending import WeightPyramidBlending
-from pyramid_blending import PyramidBlending
 
 inputDir = '../Images/'
 outputDir = '../MB_Blend/'
@@ -18,26 +17,23 @@ def ReadImages(dir):
     return images
 
 def Cv2SIFT(images):
-    # Initialize SIFT detector
     sift = cv2.SIFT_create()
 
-    # Store keypoints and descriptors
-    features = {}  # filename -> (keypoints, descriptors)
+    # store keypoints and descriptors
+    features = {} 
     for index in range(len(images)):
         image = images[index]
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-        # Detect SIFT keypoints and compute descriptors
+        # detect SIFT keypoints and compute descriptors
         keypoints, descriptors = sift.detectAndCompute(gray, None)
         features[index] = Feature(keypoints = keypoints, descriptors = descriptors)
-        print(f"[INFO] Processed {index} image - {len(keypoints)} keypoints found")
-        print(f"Descriptor shape: {descriptors.shape}")
     return features
 
 def FLANNMatcher(images, features):
-    # Set up FLANN matcher
-    index_params = dict(algorithm=1, trees=5)       # 1 = KDTree for SIFT
-    search_params = dict(checks=50)                 # Number of times the tree(s) are recursively traversed
+    # flann-matcher
+    index_params = dict(algorithm=1, trees=5) # k-d tree
+    search_params = dict(checks=50)
     flann = cv2.FlannBasedMatcher(index_params, search_params)
 
     GM_dict = {}
@@ -46,17 +42,15 @@ def FLANNMatcher(images, features):
             des_i = features[i].descriptors
             des_j = features[j].descriptors
 
-            # KNN matching (k=2)
             matches = flann.knnMatch(des_i, des_j, k=2)
 
-            # Lowe's ratio test
+            # get good matches
             good_matches = []
             for m, n in matches:
                 if m.distance < 0.6 * n.distance:
                     good_matches.append(m)
 
             if len(good_matches) > 15:
-                print(f"Good matches found for pair: ({i}, {j}) = {len(good_matches)}")
                 GM_dict[(i, j)] = good_matches
     return GM_dict
 
@@ -84,7 +78,6 @@ def ComputeCumulativeHomographies(H_dict):
     MST = nx.minimum_spanning_tree(G, weight = 'weight')
     degrees = dict(MST.degree()) # select node with highest degree (most connections)
     ref_img_idx = max(degrees, key=degrees.get) # reference image index
-    print(f"Reference image (highest degree): {ref_img_idx}")
     paths = nx.single_source_shortest_path(MST, ref_img_idx) # get paths from the reference image to every other image
 
     cumulative_H = {}
@@ -101,11 +94,11 @@ def ComputeCumulativeHomographies(H_dict):
             H = edge_data['homography']
 
             if edge_data['from_node'] != curr:
-                H_use = np.linalg.inv(H)
+                H_use = np.linalg.inv(H) # inverse homography
             else:
                 H_use = H
             H_total = H_use @ H_total
-
+        # get cumulative homorgraph to then get transformations
         cumulative_H[target] = H_total
     return cumulative_H
 
@@ -124,6 +117,7 @@ def ComputeExtentAndTranslation(cumulative_H, images):
     min_x, min_y = np.floor(all_points.min(axis=0)).astype(int)
     max_x, max_y = np.ceil(all_points.max(axis=0)).astype(int)
 
+    # check if not in positive coordinate space
     if min_x < 0 or min_y < 0:
         translation = np.array([
             [1, 0, -min_x],
@@ -150,17 +144,16 @@ def ComputeWarpedImage(w, h, translation, images, cumulative_H):
 def main():
     subDir = 'e'
     images = ReadImages(inputDir + subDir + '/*')
-    #Cv2Stitcher(images, outputDir + "panorama.png")
     features = Cv2SIFT(images)
 
     GM_dict = FLANNMatcher(images, features) # good matches dicitonary for each pair of images
-    H_dict = ComputeHomography(GM_dict, features)
+    H_dict = ComputeHomography(GM_dict, features) 
 
     cumulative_H = ComputeCumulativeHomographies(H_dict)
     w, h, translation = ComputeExtentAndTranslation(cumulative_H, images)
 
     warped = ComputeWarpedImage(w, h, translation, images, cumulative_H)
-    blended_image = WeightPyramidBlending(warped)
+    blended_image = WeightPyramidBlending(warped) # blend the image
 
     cv2.imwrite(outputDir + "warped_" + subDir + '.jpg', blended_image)
 
